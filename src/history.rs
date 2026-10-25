@@ -16,6 +16,9 @@ pub struct HistoryPoint {
     /// Bytes per second, summed over all interfaces except loopback.
     pub rx_rate: u64,
     pub tx_rate: u64,
+    /// Bytes per second over all disks.
+    pub disk_read: u64,
+    pub disk_write: u64,
 }
 
 impl HistoryPoint {
@@ -24,7 +27,15 @@ impl HistoryPoint {
         let (rx_rate, tx_rate) = nets.fold((0u64, 0u64), |(rx, tx), n| {
             (rx.saturating_add(n.rx_rate), tx.saturating_add(n.tx_rate))
         });
-        Self { timestamp: s.timestamp, cpu: s.cpu.total, mem: s.mem.percent, rx_rate, tx_rate }
+        Self {
+            timestamp: s.timestamp,
+            cpu: s.cpu.total,
+            mem: s.mem.percent,
+            rx_rate,
+            tx_rate,
+            disk_read: s.disk_io.read_rate,
+            disk_write: s.disk_io.write_rate,
+        }
     }
 }
 

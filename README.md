@@ -8,12 +8,12 @@ A lightweight, [glances](https://github.com/nicolargo/glances)-style system moni
 
 It shows:
 
-- CPU: total and per-core usage
+- CPU: total and per-core usage, I/O wait (Linux)
 - Memory and swap
-- Disks: mount point, file system, usage
+- Disks: mount point, file system, usage, read/write rates
 - Network: per-interface rx/tx rates and totals
 - Temperatures: hardware sensors with their critical points (usually not available on Windows)
-- History: graphs of CPU, memory and network over the last 10 minutes
+- History: graphs of CPU, memory, network and disk I/O over the last 10 minutes, with the peak rate
 - Processes: sortable by CPU, memory or name
 - Host: hostname, OS, uptime, load average (not available on Windows)
 
@@ -92,13 +92,13 @@ With `--web`, the following endpoints return JSON:
 | --- | --- |
 | `/api/snapshot` | Everything below in one object |
 | `/api/host` | Hostname, OS, uptime, load average |
-| `/api/cpu` | Total and per-core usage |
+| `/api/cpu` | Total and per-core usage, I/O wait (`null` except on Linux) |
 | `/api/mem` | Memory and swap |
-| `/api/disks` | Disks |
+| `/api/disks` | Disks, with read/write rates in bytes/s |
 | `/api/net` | Network interfaces (rates in bytes/s) |
 | `/api/sensors` | Temperature sensors in °C (`temp`, `max`, `critical`) |
 | `/api/processes` | Processes, sorted by CPU |
-| `/api/history` | CPU%, memory% and total network rates per sample, oldest first |
+| `/api/history` | CPU%, memory%, total network and disk rates per sample, oldest first |
 | `/api/config` | Server settings (`normalize_cpu`, `interval_ms`, `history_len`) |
 
 Data is collected in the background at the configured interval, so requests are cheap and return the latest snapshot.

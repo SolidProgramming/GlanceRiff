@@ -8,7 +8,8 @@
   :root {
     --bg: #101418; --panel: #171c22; --border: #262e38; --text: #d6dde6; --muted: #7d8a99;
     --accent: #4fc3f7; --ok: #4caf50; --warn: #f0b429; --crit: #ef5350; --track: #232b35;
-    --rx: #4fc3f7; --tx: #ce93d8;
+    --rx: #4fc3f7; --tx: #ce93d8; --rd: #4db6ac; --wr: #ffb74d;
+    --u-k: #64b5f6; --u-m: #4dd0e1; --u-g: #ba68c8; --u-t: #ff8a65;
   }
   * { box-sizing: border-box; }
   body {
@@ -45,12 +46,21 @@
   svg.spark polygon { stroke: none; opacity: .15; }
   svg.spark .grid { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
   .net-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-  .rx { color: var(--rx); } .tx { color: var(--tx); }
+  .rx { color: var(--rx); } .tx { color: var(--tx); } .rd { color: var(--rd); } .wr { color: var(--wr); }
+  /* Byte values colored by unit: B, K, M, G, T and up. */
+  .u0 { color: var(--muted); } .u1 { color: var(--u-k); } .u2 { color: var(--u-m); }
+  .u3 { color: var(--u-g); } .u4, .u5 { color: var(--u-t); }
   .ok { color: var(--ok); } .warn { color: var(--warn); } .crit { color: var(--crit); }
   .stack { display: grid; gap: 12px; }
   #processes { margin-top: 12px; }
   .proc-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
   .proc-head label { cursor: pointer; user-select: none; }
+  .proc-controls { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; justify-content: flex-end; }
+  #proc-limit {
+    width: 4.5em; padding: 1px 4px; font: inherit; color: var(--text);
+    background: var(--track); border: 1px solid var(--border); border-radius: 4px;
+  }
+  #proc-limit:focus { outline: none; border-color: var(--accent); }
   @media (max-width: 760px) {
     .gauges, .middle { grid-template-columns: 1fr; }
     .hide-sm { display: none; }
@@ -77,14 +87,16 @@
   <div class="stack">
     <div class="panel">
       <div class="net-head"><h2>Network</h2><span class="muted"><span class="rx">▬ rx</span> <span class="tx">▬ tx</span> · max <span id="net-max">–</span></span></div>
-      <svg class="spark net" id="net-graph" viewBox="0 0 100 30" preserveAspectRatio="none"><line class="grid" x1="0" y1="30" x2="100" y2="30"/><polyline class="rx-line"/><polyline class="tx-line"/></svg>
+      <svg class="spark net" id="net-graph" viewBox="0 0 100 30" preserveAspectRatio="none"><line class="grid" x1="0" y1="30" x2="100" y2="30"/><polyline/><polyline/></svg>
       <table><thead><tr><th>Interface</th><th>Rx/s</th><th>Tx/s</th><th class="hide-sm">Rx total</th><th class="hide-sm">Tx total</th></tr></thead><tbody id="nets"></tbody></table>
     </div>
     <div class="panel" id="sensors-panel" hidden><h2>Sensors</h2>
       <table><thead><tr><th>Sensor</th><th>Temp</th><th>Max</th><th>Crit</th></tr></thead><tbody id="sensors"></tbody></table>
     </div>
-    <div class="panel"><h2>Disks</h2>
-      <table><thead><tr><th>Mount</th><th class="hide-sm">FS</th><th>Used</th><th>Total</th><th>Use%</th></tr></thead><tbody id="disks"></tbody></table>
+    <div class="panel">
+      <div class="net-head"><h2>Disks</h2><span class="muted"><span class="rd">▬ read</span> <span class="wr">▬ write</span> · max <span id="disk-max">–</span></span></div>
+      <svg class="spark net" id="disk-graph" viewBox="0 0 100 30" preserveAspectRatio="none"><line class="grid" x1="0" y1="30" x2="100" y2="30"/><polyline/><polyline/></svg>
+      <table><thead><tr><th>Mount</th><th class="hide-sm">FS</th><th>Used</th><th>Total</th><th>Use%</th><th>Read/s</th><th>Write/s</th></tr></thead><tbody id="disks"></tbody></table>
     </div>
   </div>
 </section>
@@ -92,9 +104,14 @@
 <section class="panel" id="processes">
   <div class="proc-head">
     <h2>Processes <span id="proc-count" class="muted"></span></h2>
-    <label class="muted" title="Off: per core, can exceed 100%. On: share of the whole machine, max 100%.">
-      <input type="checkbox" id="normalize"> CPU% of total
-    </label>
+    <div class="proc-controls">
+      <label class="muted" title="Number of processes to list">
+        Show <input type="number" id="proc-limit" min="1" max="500" step="1" value="15">
+      </label>
+      <label class="muted" title="Off: per core, can exceed 100%. On: share of the whole machine, max 100%.">
+        <input type="checkbox" id="normalize"> CPU% of total
+      </label>
+    </div>
   </div>
   <table id="procs">
     <thead><tr>
@@ -106,7 +123,7 @@
 </section>
 
 <script>
-const MAX_PROCS = 50;
+const DEFAULT_PROCS = 15, MAX_PROCS = 500;
 // Both come from /api/config so the graphs match the server's collection interval.
 let refreshMs = 2000, historyCap = 300;
 const $ = id => document.getElementById(id);
@@ -115,12 +132,20 @@ let sortKey = 'cpu', sortDesc = true, last = null, history = [];
 const level = p => p < 50 ? 'ok' : p < 80 ? 'warn' : 'crit';
 // Same thresholds as the terminal UI: critical point (or 80 °C), warning from 65 °C.
 const tempLevel = (t, crit) => t >= (crit ?? 80) ? 'crit' : t >= 65 ? 'warn' : 'ok';
+// I/O wait runs far below CPU load, so it gets its own, lower thresholds.
+const ioLevel = p => p < 5 ? 'ok' : p < 15 ? 'warn' : 'crit';
 const temp = t => t == null ? '–' : t.toFixed(0) + '°C';
 const color = p => `var(--${level(p)})`;
 function bytes(n) {
   const u = ['B', 'K', 'M', 'G', 'T', 'P']; let i = 0;
   while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
   return i ? n.toFixed(1) + u[i] : n + 'B';
+}
+// Table cell for a byte value, colored by the unit bytes() picks.
+function bytesCell(n, cls = '') {
+  let unit = 0;
+  for (let v = n; v >= 1024 && unit < 5; v /= 1024) unit++;
+  return [bytes(n), `u${unit} ${cls}`.trim()];
 }
 function uptime(s) {
   const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
@@ -176,6 +201,7 @@ function historyPoint(s) {
   return {
     timestamp: s.timestamp, cpu: s.cpu.total, mem: s.mem.percent,
     rx_rate: nets.reduce((a, n) => a + n.rx_rate, 0), tx_rate: nets.reduce((a, n) => a + n.tx_rate, 0),
+    disk_read: s.disk_io.read_rate, disk_write: s.disk_io.write_rate,
   };
 }
 function pushHistory(s) {
@@ -205,13 +231,17 @@ function renderGraphs() {
   const now = history[history.length - 1];
   sparkline($('g-cpu').querySelector('svg'), history.map(p => p.cpu), 100, color(now.cpu));
   sparkline($('g-mem').querySelector('svg'), history.map(p => p.mem), 100, color(now.mem));
-  const rx = history.map(p => p.rx_rate), tx = history.map(p => p.tx_rate);
-  const max = Math.max(1, ...rx, ...tx), net = $('net-graph');
-  net.querySelector('.rx-line').setAttribute('points', linePoints(rx, max));
-  net.querySelector('.tx-line').setAttribute('points', linePoints(tx, max));
-  net.querySelector('.rx-line').style.stroke = 'var(--rx)';
-  net.querySelector('.tx-line').style.stroke = 'var(--tx)';
-  $('net-max').textContent = bytes(max) + '/s';
+  rateGraph('net-graph', 'net-max', history.map(p => p.rx_rate), history.map(p => p.tx_rate), 'var(--rx)', 'var(--tx)');
+  rateGraph('disk-graph', 'disk-max', history.map(p => p.disk_read), history.map(p => p.disk_write), 'var(--rd)', 'var(--wr)');
+}
+// Two byte-rate lines on a shared scale; the peak over the visible history is shown as "max".
+function rateGraph(svgId, maxId, a, b, colorA, colorB) {
+  const max = Math.max(1, ...a, ...b), [lineA, lineB] = $(svgId).querySelectorAll('polyline');
+  lineA.setAttribute('points', linePoints(a, max));
+  lineB.setAttribute('points', linePoints(b, max));
+  lineA.style.stroke = colorA;
+  lineB.style.stroke = colorB;
+  $(maxId).textContent = bytes(max) + '/s';
 }
 
 function renderProcs() {
@@ -222,11 +252,12 @@ function renderProcs() {
     return (typeof x === 'string' ? x.localeCompare(y, undefined, { sensitivity: 'base' }) : x - y) * dir;
   });
   const divisor = $('normalize').checked ? Math.max(last.cpu.cores.length, 1) : 1;
-  $('procs').tBodies[0].replaceChildren(...procs.slice(0, MAX_PROCS).map(p => {
+  const limit = procLimit();
+  $('procs').tBodies[0].replaceChildren(...procs.slice(0, limit).map(p => {
     const cpu = p.cpu / divisor;
-    return row([p.pid, [cpu.toFixed(1), level(cpu)], p.mem_percent.toFixed(1), bytes(p.mem), [p.name, 'name']]);
+    return row([p.pid, [cpu.toFixed(1), level(cpu)], p.mem_percent.toFixed(1), bytesCell(p.mem), [p.name, 'name']]);
   }));
-  $('proc-count').textContent = `(${last.processes.length}, top ${Math.min(MAX_PROCS, procs.length)})`;
+  $('proc-count').textContent = `(${last.processes.length}, top ${Math.min(limit, procs.length)})`;
   document.querySelectorAll('#procs th').forEach(th => th.classList.toggle('sorted', th.dataset.key === sortKey));
 }
 
@@ -239,17 +270,23 @@ function render(s) {
   document.title = `${s.host.hostname} · CPU ${s.cpu.total.toFixed(0)}% · GlanceRiff`;
 
   gauge('g-cpu', s.cpu.total, `${s.cpu.cores.length} cores`);
+  if (s.cpu.iowait != null) {
+    const io = document.createElement('span');
+    io.className = ioLevel(s.cpu.iowait);
+    io.textContent = s.cpu.iowait.toFixed(1) + '%';
+    $('g-cpu').querySelector('.detail').append(' · iowait ', io);
+  }
   gauge('g-mem', s.mem.percent, `${bytes(s.mem.used)} / ${bytes(s.mem.total)}`);
   gauge('g-swap', s.swap.percent, `${bytes(s.swap.used)} / ${bytes(s.swap.total)}`);
   renderCores(s.cpu.cores);
 
-  $('nets').replaceChildren(...s.nets.map(n => row([n.name, bytes(n.rx_rate), bytes(n.tx_rate),
-    [bytes(n.rx_total), 'hide-sm'], [bytes(n.tx_total), 'hide-sm']])));
+  $('nets').replaceChildren(...s.nets.map(n => row([n.name, bytesCell(n.rx_rate), bytesCell(n.tx_rate),
+    bytesCell(n.rx_total, 'hide-sm'), bytesCell(n.tx_total, 'hide-sm')])));
   $('sensors-panel').hidden = !s.sensors.length;
   $('sensors').replaceChildren(...s.sensors.map(t => row([t.label, [temp(t.temp), tempLevel(t.temp, t.critical)],
     temp(t.max), temp(t.critical)])));
-  $('disks').replaceChildren(...s.disks.map(d => row([d.mount, [d.fs, 'hide-sm'], bytes(d.used), bytes(d.total),
-    [d.percent.toFixed(1) + '%', level(d.percent)]])));
+  $('disks').replaceChildren(...s.disks.map(d => row([d.mount, [d.fs, 'hide-sm'], bytesCell(d.used), bytesCell(d.total),
+    [d.percent.toFixed(1) + '%', level(d.percent)], bytesCell(d.read_rate), bytesCell(d.write_rate)])));
   pushHistory(s);
   renderGraphs();
   renderProcs();
@@ -261,6 +298,23 @@ document.querySelectorAll('#procs th').forEach(th => th.addEventListener('click'
   else { sortKey = key; sortDesc = key !== 'name' && key !== 'pid'; }
   renderProcs();
 }));
+
+// Whole number within 1..MAX_PROCS; an empty or invalid field falls back to the default.
+function procLimit() {
+  const n = Math.round(Number($('proc-limit').value));
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, MAX_PROCS) : DEFAULT_PROCS;
+}
+// Re-render while typing or clicking the arrows; tidy up the field and remember it once done.
+$('proc-limit').addEventListener('input', renderProcs);
+$('proc-limit').addEventListener('change', e => {
+  e.target.value = procLimit();
+  try { localStorage.setItem('proc_limit', e.target.value); } catch {}
+  renderProcs();
+});
+try {
+  const saved = localStorage.getItem('proc_limit');
+  if (saved !== null) $('proc-limit').value = saved;
+} catch {}
 
 // Default comes from --normalize-cpu; a choice made in this browser wins.
 $('normalize').addEventListener('change', e => {
