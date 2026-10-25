@@ -108,6 +108,21 @@ docker compose up -d --build  # builds the image locally
 
 Disks only show up if they are mounted into the container, for example `-v /mnt/user:/mnt/user:ro`.
 
+### Terminal UI in the container
+
+Open the terminal UI inside the running web container:
+
+```sh
+podman exec -it glanceriff glanceriff
+```
+
+Or run it on its own, without the web server. Any arguments after the image name replace the default `--web`:
+
+```sh
+podman run -it --rm --pid=host --network=host --uts=host \
+  ghcr.io/solidprogramming/glanceriff:latest --interval 2
+```
+
 ### Unraid
 
 1. Download the [template](unraid/glanceriff.xml) to `/boot/config/plugins/dockerMan/templates-user/my-glanceriff.xml` on your server:
@@ -121,6 +136,8 @@ Disks only show up if they are mounted into the container, for example `-v /mnt/
 3. Click **Apply**. The web UI opens from the container's context menu.
 
 The template uses host networking with `--pid=host --uts=host` and mounts `/etc/os-release` and `/mnt/user` read-only.
+
+For the terminal UI, open the Unraid terminal (the `>_` icon in the top bar) and run `docker exec -it GlanceRiff glanceriff`. The *Console* entry in the container menu doesn't work, because the image contains no shell.
 
 ## Development
 
