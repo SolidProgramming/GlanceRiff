@@ -7,7 +7,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/SolidProgramming/GlanceRiff/issues</Support>
   <Project>https://github.com/SolidProgramming/GlanceRiff</Project>
-  <Overview>Lightweight glances-style system monitor. Web dashboard and JSON API for CPU, memory, disks, network and processes.</Overview>
+  <Overview>Lightweight glances-style system monitor. Web dashboard and JSON API for CPU, memory, disks, network, temperatures and processes, with history graphs. Optional password or token protection.</Overview>
   <Category>Tools: Status:Stable</Category>
   <WebUI>http://[IP]:[PORT:61208]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/SolidProgramming/GlanceRiff/master/unraid/glanceriff.xml</TemplateURL>
@@ -15,4 +15,7 @@
   <PostArgs/>
   <Config Name="Host OS info" Target="/etc/os-release" Default="/etc/os-release" Mode="ro" Description="Lets the dashboard show the host's OS name instead of the container's." Type="Path" Display="advanced" Required="false" Mask="false">/etc/os-release</Config>
   <Config Name="User shares" Target="/mnt/user" Default="/mnt/user" Mode="ro" Description="Mounted read-only so the disk usage of the user shares shows up." Type="Path" Display="always" Required="false" Mask="false">/mnt/user</Config>
+  <Config Name="Username" Target="GLANCERIFF_USERNAME" Default="" Mode="" Description="Login for the web UI. Set together with the password, or leave both empty for no login." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Password" Target="GLANCERIFF_PASSWORD" Default="" Mode="" Description="Password for the web UI login." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="API token" Target="GLANCERIFF_TOKEN" Default="" Mode="" Description="Lets scripts call the API with 'Authorization: Bearer TOKEN'. Leave empty to disable." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
 </Container>

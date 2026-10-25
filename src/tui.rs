@@ -5,13 +5,14 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Gauge, Paragraph, Row, Table},
+    widgets::{Block, Gauge, Paragraph, Row, Sparkline, Table},
     DefaultTerminal, Frame,
 };
 
 use crate::{
     collector::Collector,
     fmt::{format_uptime, human_bytes, human_rate},
+    history::History,
     model::Snapshot,
 };
 
@@ -27,6 +28,8 @@ enum SortKey {
 struct App {
     collector: Collector,
     snapshot: Snapshot,
+    history: History,
+    show_graphs: bool,
     sort: SortKey,
     paused: bool,
     /// Divide process CPU% by the core count so 100% means the whole machine.
@@ -38,9 +41,13 @@ struct App {
 pub fn run(interval: Duration, normalize_cpu: bool) -> anyhow::Result<()> {
     let mut collector = Collector::new();
     let snapshot = collector.collect();
+    let mut history = History::new(interval);
+    history.push(&snapshot);
     let mut app = App {
         collector,
         snapshot,
+        history,
+        show_graphs: true,
         sort: SortKey::Cpu,
         paused: false,
         normalize_cpu,
@@ -60,6 +67,7 @@ impl App {
         loop {
             if !self.paused && self.last_refresh.elapsed() >= self.interval {
                 self.snapshot = self.collector.collect();
+                self.history.push(&self.snapshot);
                 self.last_refresh = Instant::now();
             }
             terminal.draw(|f| self.draw(f))?;
@@ -75,6 +83,7 @@ impl App {
                     KeyCode::Char('p') => self.sort = SortKey::Name,
                     KeyCode::Char(' ') => self.paused = !self.paused,
                     KeyCode::Char('n') => self.normalize_cpu = !self.normalize_cpu,
+                    KeyCode::Char('g') => self.show_graphs = !self.show_graphs,
                     KeyCode::Char('+') => self.interval += Duration::from_millis(500),
                     KeyCode::Char('-') => {
                         self.interval = self
@@ -89,9 +98,11 @@ impl App {
     }
 
     fn draw(&self, f: &mut Frame) {
-        let [header, gauges, middle, procs, footer] = Layout::vertical([
+        let graphs_height = if self.show_graphs { 5 } else { 0 };
+        let [header, gauges, graphs, middle, procs, footer] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(3),
+            Constraint::Length(graphs_height),
             Constraint::Min(6),
             Constraint::Percentage(45),
             Constraint::Length(1),
@@ -100,10 +111,25 @@ impl App {
 
         self.draw_header(f, header);
         self.draw_gauges(f, gauges);
+        if self.show_graphs {
+            self.draw_graphs(f, graphs);
+        }
         let [left, right] =
             Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
                 .areas(middle);
-        self.draw_cores(f, left);
+        if self.snapshot.sensors.is_empty() {
+            self.draw_cores(f, left);
+        } else {
+            // Header row + borders, at most half the column.
+            let wanted = self.snapshot.sensors.len() as u16 + 3;
+            let [cores, sensors] = Layout::vertical([
+                Constraint::Min(4),
+                Constraint::Length(wanted.min(left.height / 2)),
+            ])
+            .areas(left);
+            self.draw_cores(f, cores);
+            self.draw_sensors(f, sensors);
+        }
         self.draw_net_disks(f, right);
         self.draw_processes(f, procs);
         self.draw_footer(f, footer);
@@ -140,6 +166,71 @@ impl App {
                 .label(label);
             f.render_widget(gauge, *area);
         }
+    }
+
+    fn draw_graphs(&self, f: &mut Frame, area: Rect) {
+        let [cpu, mem, net] = Layout::horizontal([Constraint::Ratio(1, 3); 3]).areas(area);
+        // Sparkline draws from the left, so hand it only the newest points that fit.
+        let tail = |area: Rect, value: &dyn Fn(&crate::history::HistoryPoint) -> u64| -> Vec<u64> {
+            let width = area.width.saturating_sub(2) as usize;
+            let skip = self.history.points().len().saturating_sub(width);
+            self.history.points().skip(skip).map(value).collect()
+        };
+        let s = &self.snapshot;
+
+        let cpu_data = tail(cpu, &|p| p.cpu.round() as u64);
+        f.render_widget(
+            Sparkline::default()
+                .block(Block::bordered().title(format!("CPU {:.1}%", s.cpu.total)))
+                .style(Style::new().fg(level_color(s.cpu.total)))
+                .max(100)
+                .data(&cpu_data),
+            cpu,
+        );
+
+        let mem_data = tail(mem, &|p| p.mem.round() as u64);
+        f.render_widget(
+            Sparkline::default()
+                .block(Block::bordered().title(format!("MEM {:.1}%", s.mem.percent)))
+                .style(Style::new().fg(level_color(s.mem.percent)))
+                .max(100)
+                .data(&mem_data),
+            mem,
+        );
+
+        let net_data = tail(net, &|p| p.rx_rate.saturating_add(p.tx_rate));
+        let (rx, tx) = self
+            .history
+            .points()
+            .last()
+            .map_or((0, 0), |p| (p.rx_rate, p.tx_rate));
+        let peak = net_data.iter().copied().max().unwrap_or(0);
+        f.render_widget(
+            Sparkline::default()
+                .block(
+                    Block::bordered()
+                        .title(format!("NET ↓{} ↑{}", human_rate(rx), human_rate(tx)))
+                        .title_bottom(Line::from(format!("max {}", human_rate(peak))).right_aligned()),
+                )
+                .style(Style::new().fg(Color::Cyan))
+                .max(peak.max(1))
+                .data(&net_data),
+            net,
+        );
+    }
+
+    fn draw_sensors(&self, f: &mut Frame, area: Rect) {
+        let rows = self.snapshot.sensors.iter().map(|t| {
+            Row::new(vec![
+                Span::raw(t.label.clone()),
+                Span::styled(format!("{:.0}°C", t.temp), Style::new().fg(temp_color(t.temp, t.critical))),
+                Span::raw(t.critical.map_or("–".into(), |c| format!("{c:.0}°C"))),
+            ])
+        });
+        let table = Table::new(rows, [Constraint::Fill(1), Constraint::Length(6), Constraint::Length(6)])
+            .header(header_row(["Sensor", "Temp", "Crit"]))
+            .block(Block::bordered().title("Sensors"));
+        f.render_widget(table, area);
     }
 
     fn draw_cores(&self, f: &mut Frame, area: Rect) {
@@ -256,7 +347,7 @@ impl App {
         let line = Line::from(vec![
             state,
             Span::raw(format!(
-                " q quit  c/m/p sort  space pause  n cpu% ({})  +/- interval ({:.1}s)",
+                " q quit  c/m/p sort  space pause  g graphs  n cpu% ({})  +/- interval ({:.1}s)",
                 if self.normalize_cpu { "total" } else { "per core" },
                 self.interval.as_secs_f32()
             ))
@@ -281,5 +372,76 @@ fn level_color(pct: f32) -> Color {
         p if p < 50.0 => Color::Green,
         p if p < 80.0 => Color::Yellow,
         _ => Color::Red,
+    }
+}
+
+/// Red at the sensor's critical point (80 °C if it has none), yellow from 65 °C.
+fn temp_color(temp: f32, critical: Option<f32>) -> Color {
+    match temp {
+        t if t >= critical.unwrap_or(80.0) => Color::Red,
+        t if t >= 65.0 => Color::Yellow,
+        _ => Color::Green,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{backend::TestBackend, Terminal};
+
+    use super::*;
+    use crate::model::SensorInfo;
+
+    fn render(app: &App) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let buf = terminal.backend().buffer();
+        buf.content().iter().map(|c| c.symbol()).collect()
+    }
+
+    #[test]
+    fn draws_graphs_and_sensors() {
+        let mut collector = Collector::new();
+        let mut snapshot = collector.collect();
+        snapshot.sensors = vec![SensorInfo {
+            label: "Package id 0".into(),
+            temp: 71.0,
+            max: Some(80.0),
+            critical: Some(100.0),
+        }];
+        let mut history = History::with_capacity(50);
+        for _ in 0..10 {
+            history.push(&snapshot);
+        }
+        let mut app = App {
+            collector,
+            snapshot,
+            history,
+            show_graphs: true,
+            sort: SortKey::Cpu,
+            paused: false,
+            normalize_cpu: false,
+            interval: Duration::from_secs(2),
+            last_refresh: Instant::now(),
+        };
+
+        let screen = render(&app);
+        assert!(screen.contains("NET ↓"), "graphs row missing");
+        assert!(screen.contains("Sensors") && screen.contains("Package id 0"));
+        assert!(screen.contains("71°C") && screen.contains("100°C"));
+
+        app.show_graphs = false;
+        app.snapshot.sensors.clear();
+        let screen = render(&app);
+        assert!(!screen.contains("NET ↓"));
+        assert!(!screen.contains("Sensors"));
+    }
+
+    #[test]
+    fn temp_colors() {
+        assert_eq!(temp_color(50.0, None), Color::Green);
+        assert_eq!(temp_color(70.0, None), Color::Yellow);
+        assert_eq!(temp_color(85.0, None), Color::Red);
+        assert_eq!(temp_color(85.0, Some(100.0)), Color::Yellow);
+        assert_eq!(temp_color(100.0, Some(100.0)), Color::Red);
     }
 }
