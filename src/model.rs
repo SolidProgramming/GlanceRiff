@@ -10,6 +10,7 @@ pub struct Snapshot {
     pub swap: MemInfo,
     pub disks: Vec<DiskInfo>,
     pub nets: Vec<NetInfo>,
+    pub sensors: Vec<SensorInfo>,
     pub processes: Vec<ProcessInfo>,
 }
 
@@ -61,6 +62,16 @@ pub struct NetInfo {
     pub tx_total: u64,
 }
 
+/// A temperature sensor. All values in °C.
+#[derive(Debug, Clone, Serialize)]
+pub struct SensorInfo {
+    pub label: String,
+    pub temp: f32,
+    /// Highest temperature seen since the sensor was first read.
+    pub max: Option<f32>,
+    pub critical: Option<f32>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ProcessInfo {
     pub pid: u32,
@@ -86,5 +97,6 @@ mod tests {
         let json = serde_json::to_value(Snapshot::default()).unwrap();
         assert!(json.get("cpu").is_some());
         assert!(json["host"]["load_avg"].is_null());
+        assert!(json["sensors"].as_array().unwrap().is_empty());
     }
 }

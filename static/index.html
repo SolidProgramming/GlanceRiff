@@ -8,6 +8,7 @@
   :root {
     --bg: #101418; --panel: #171c22; --border: #262e38; --text: #d6dde6; --muted: #7d8a99;
     --accent: #4fc3f7; --ok: #4caf50; --warn: #f0b429; --crit: #ef5350; --track: #232b35;
+    --rx: #4fc3f7; --tx: #ce93d8;
   }
   * { box-sizing: border-box; }
   body {
@@ -38,6 +39,13 @@
   tbody tr:hover { background: #1d242c; }
   #procs th { cursor: pointer; user-select: none; }
   #procs th.sorted { color: var(--accent); }
+  svg.spark { display: block; width: 100%; height: 36px; margin-top: 8px; overflow: visible; }
+  svg.spark.net { height: 56px; margin: 0 0 8px; }
+  svg.spark polyline { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+  svg.spark polygon { stroke: none; opacity: .15; }
+  svg.spark .grid { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .net-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .rx { color: var(--rx); } .tx { color: var(--tx); }
   .ok { color: var(--ok); } .warn { color: var(--warn); } .crit { color: var(--crit); }
   .stack { display: grid; gap: 12px; }
   #processes { margin-top: 12px; }
@@ -59,16 +67,21 @@
 </header>
 
 <section class="grid gauges">
-  <div class="panel gauge" id="g-cpu"><div class="row"><h2>CPU</h2><span class="pct">–</span></div><div class="bar"><i></i></div><div class="muted detail">&nbsp;</div></div>
-  <div class="panel gauge" id="g-mem"><div class="row"><h2>Memory</h2><span class="pct">–</span></div><div class="bar"><i></i></div><div class="muted detail">&nbsp;</div></div>
+  <div class="panel gauge" id="g-cpu"><div class="row"><h2>CPU</h2><span class="pct">–</span></div><div class="bar"><i></i></div><div class="muted detail">&nbsp;</div><svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><line class="grid" x1="0" y1="30" x2="100" y2="30"/><polygon/><polyline/></svg></div>
+  <div class="panel gauge" id="g-mem"><div class="row"><h2>Memory</h2><span class="pct">–</span></div><div class="bar"><i></i></div><div class="muted detail">&nbsp;</div><svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><line class="grid" x1="0" y1="30" x2="100" y2="30"/><polygon/><polyline/></svg></div>
   <div class="panel gauge" id="g-swap"><div class="row"><h2>Swap</h2><span class="pct">–</span></div><div class="bar"><i></i></div><div class="muted detail">&nbsp;</div></div>
 </section>
 
 <section class="grid middle">
   <div class="panel"><h2>Cores</h2><div class="cores" id="cores"></div></div>
   <div class="stack">
-    <div class="panel"><h2>Network</h2>
+    <div class="panel">
+      <div class="net-head"><h2>Network</h2><span class="muted"><span class="rx">▬ rx</span> <span class="tx">▬ tx</span> · max <span id="net-max">–</span></span></div>
+      <svg class="spark net" id="net-graph" viewBox="0 0 100 30" preserveAspectRatio="none"><line class="grid" x1="0" y1="30" x2="100" y2="30"/><polyline class="rx-line"/><polyline class="tx-line"/></svg>
       <table><thead><tr><th>Interface</th><th>Rx/s</th><th>Tx/s</th><th class="hide-sm">Rx total</th><th class="hide-sm">Tx total</th></tr></thead><tbody id="nets"></tbody></table>
+    </div>
+    <div class="panel" id="sensors-panel" hidden><h2>Sensors</h2>
+      <table><thead><tr><th>Sensor</th><th>Temp</th><th>Max</th><th>Crit</th></tr></thead><tbody id="sensors"></tbody></table>
     </div>
     <div class="panel"><h2>Disks</h2>
       <table><thead><tr><th>Mount</th><th class="hide-sm">FS</th><th>Used</th><th>Total</th><th>Use%</th></tr></thead><tbody id="disks"></tbody></table>
@@ -93,11 +106,16 @@
 </section>
 
 <script>
-const REFRESH_MS = 2000, MAX_PROCS = 50;
+const MAX_PROCS = 50;
+// Both come from /api/config so the graphs match the server's collection interval.
+let refreshMs = 2000, historyCap = 300;
 const $ = id => document.getElementById(id);
-let sortKey = 'cpu', sortDesc = true, last = null;
+let sortKey = 'cpu', sortDesc = true, last = null, history = [];
 
 const level = p => p < 50 ? 'ok' : p < 80 ? 'warn' : 'crit';
+// Same thresholds as the terminal UI: critical point (or 80 °C), warning from 65 °C.
+const tempLevel = (t, crit) => t >= (crit ?? 80) ? 'crit' : t >= 65 ? 'warn' : 'ok';
+const temp = t => t == null ? '–' : t.toFixed(0) + '°C';
 const color = p => `var(--${level(p)})`;
 function bytes(n) {
   const u = ['B', 'K', 'M', 'G', 'T', 'P']; let i = 0;
@@ -151,6 +169,51 @@ function renderCores(cores) {
   });
 }
 
+// Mirrors HistoryPoint::from_snapshot on the server.
+const isLoopback = name => name === 'lo' || /loopback/i.test(name);
+function historyPoint(s) {
+  const nets = s.nets.filter(n => !isLoopback(n.name));
+  return {
+    timestamp: s.timestamp, cpu: s.cpu.total, mem: s.mem.percent,
+    rx_rate: nets.reduce((a, n) => a + n.rx_rate, 0), tx_rate: nets.reduce((a, n) => a + n.tx_rate, 0),
+  };
+}
+function pushHistory(s) {
+  if (history.length && history[history.length - 1].timestamp >= s.timestamp) return;
+  history.push(historyPoint(s));
+  if (history.length > historyCap) history.splice(0, history.length - historyCap);
+}
+
+// Right-aligned: the newest value sits at the right edge, the graph fills in from there.
+function linePoints(values, max) {
+  const step = 100 / Math.max(historyCap - 1, 1), offset = 100 - (values.length - 1) * step;
+  return values.map((v, i) => `${(offset + i * step).toFixed(2)},${(30 - Math.min(v / max, 1) * 29).toFixed(2)}`).join(' ');
+}
+function sparkline(svg, values, max, color) {
+  const pts = linePoints(values, max);
+  const line = svg.querySelector('polyline'), area = svg.querySelector('polygon');
+  line.setAttribute('points', pts);
+  line.style.stroke = color;
+  if (area && values.length) {
+    const first = pts.slice(0, pts.indexOf(','));
+    area.setAttribute('points', `${first},30 ${pts} 100,30`);
+    area.style.fill = color;
+  }
+}
+function renderGraphs() {
+  if (!history.length) return;
+  const now = history[history.length - 1];
+  sparkline($('g-cpu').querySelector('svg'), history.map(p => p.cpu), 100, color(now.cpu));
+  sparkline($('g-mem').querySelector('svg'), history.map(p => p.mem), 100, color(now.mem));
+  const rx = history.map(p => p.rx_rate), tx = history.map(p => p.tx_rate);
+  const max = Math.max(1, ...rx, ...tx), net = $('net-graph');
+  net.querySelector('.rx-line').setAttribute('points', linePoints(rx, max));
+  net.querySelector('.tx-line').setAttribute('points', linePoints(tx, max));
+  net.querySelector('.rx-line').style.stroke = 'var(--rx)';
+  net.querySelector('.tx-line').style.stroke = 'var(--tx)';
+  $('net-max').textContent = bytes(max) + '/s';
+}
+
 function renderProcs() {
   if (!last) return;
   const dir = sortDesc ? -1 : 1;
@@ -182,8 +245,13 @@ function render(s) {
 
   $('nets').replaceChildren(...s.nets.map(n => row([n.name, bytes(n.rx_rate), bytes(n.tx_rate),
     [bytes(n.rx_total), 'hide-sm'], [bytes(n.tx_total), 'hide-sm']])));
+  $('sensors-panel').hidden = !s.sensors.length;
+  $('sensors').replaceChildren(...s.sensors.map(t => row([t.label, [temp(t.temp), tempLevel(t.temp, t.critical)],
+    temp(t.max), temp(t.critical)])));
   $('disks').replaceChildren(...s.disks.map(d => row([d.mount, [d.fs, 'hide-sm'], bytes(d.used), bytes(d.total),
     [d.percent.toFixed(1) + '%', level(d.percent)]])));
+  pushHistory(s);
+  renderGraphs();
   renderProcs();
 }
 
@@ -200,10 +268,12 @@ $('normalize').addEventListener('change', e => {
   renderProcs();
 });
 async function loadConfig() {
-  let saved = null;
+  let config = {}, saved = null;
+  try { config = await (await fetch('/api/config')).json(); } catch {}
+  if (config.interval_ms > 0) refreshMs = config.interval_ms;
+  if (config.history_len > 0) historyCap = config.history_len;
   try { saved = localStorage.getItem('normalize_cpu'); } catch {}
-  if (saved !== null) { $('normalize').checked = saved === 'true'; return; }
-  try { $('normalize').checked = (await (await fetch('/api/config')).json()).normalize_cpu; } catch {}
+  $('normalize').checked = saved !== null ? saved === 'true' : !!config.normalize_cpu;
 }
 
 async function tick() {
@@ -217,9 +287,15 @@ async function tick() {
     $('status').textContent = 'connection lost, retrying…';
     $('status').classList.add('stale');
   }
-  setTimeout(tick, REFRESH_MS);
+  setTimeout(tick, refreshMs);
 }
-loadConfig().then(tick);
+async function loadHistory() {
+  try {
+    const points = await (await fetch('/api/history', { cache: 'no-store' })).json();
+    history = points.slice(-historyCap);
+  } catch {}
+}
+loadConfig().then(loadHistory).then(tick);
 </script>
 </body>
 </html>

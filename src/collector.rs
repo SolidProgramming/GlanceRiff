@@ -1,15 +1,19 @@
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use sysinfo::{
-    Disks, Networks, ProcessesToUpdate, System, ThreadKind, MINIMUM_CPU_UPDATE_INTERVAL,
+    Components, Disks, Networks, ProcessesToUpdate, System, ThreadKind,
+    MINIMUM_CPU_UPDATE_INTERVAL,
 };
 
-use crate::model::{CpuInfo, DiskInfo, HostInfo, MemInfo, NetInfo, ProcessInfo, Snapshot};
+use crate::model::{
+    CpuInfo, DiskInfo, HostInfo, MemInfo, NetInfo, ProcessInfo, SensorInfo, Snapshot,
+};
 
 pub struct Collector {
     sys: System,
     disks: Disks,
     nets: Networks,
+    components: Components,
     last_refresh: Instant,
     hostname: String,
     os: String,
@@ -27,6 +31,7 @@ impl Collector {
             sys,
             disks: Disks::new_with_refreshed_list(),
             nets: Networks::new_with_refreshed_list(),
+            components: Components::new_with_refreshed_list(),
             last_refresh: Instant::now(),
             hostname: System::host_name().unwrap_or_else(|| "unknown".into()),
             os: System::long_os_version().unwrap_or_else(|| "unknown".into()),
@@ -43,6 +48,7 @@ impl Collector {
         self.sys.refresh_processes(ProcessesToUpdate::All, true);
         self.disks.refresh(true);
         self.nets.refresh(true);
+        self.components.refresh(true);
 
         let total_mem = self.sys.total_memory();
         let load = System::load_average();
@@ -80,6 +86,22 @@ impl Collector {
             })
             .collect();
 
+        // Often empty on Windows, where sysinfo needs WMI access for sensors.
+        let mut sensors: Vec<SensorInfo> = self
+            .components
+            .list()
+            .iter()
+            .filter_map(|c| {
+                Some(SensorInfo {
+                    label: c.label().to_string(),
+                    temp: c.temperature().filter(|t| t.is_finite())?,
+                    max: c.max().filter(|t| t.is_finite()),
+                    critical: c.critical().filter(|t| t.is_finite() && *t > 0.0),
+                })
+            })
+            .collect();
+        sensors.sort_by(|a, b| a.label.cmp(&b.label));
+
         let mut processes: Vec<ProcessInfo> = self
             .sys
             .processes()
@@ -115,6 +137,7 @@ impl Collector {
             swap: MemInfo::new(self.sys.total_swap(), self.sys.used_swap()),
             disks,
             nets,
+            sensors,
             processes,
         }
     }
