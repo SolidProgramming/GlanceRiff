@@ -9,6 +9,7 @@ pub struct Snapshot {
     pub mem: MemInfo,
     pub swap: MemInfo,
     pub disks: Vec<DiskInfo>,
+    pub disk_io: DiskIo,
     pub nets: Vec<NetInfo>,
     pub sensors: Vec<SensorInfo>,
     pub processes: Vec<ProcessInfo>,
@@ -27,6 +28,9 @@ pub struct HostInfo {
 pub struct CpuInfo {
     pub total: f32,
     pub cores: Vec<f32>,
+    /// Share of CPU time spent waiting for I/O since the last refresh, in percent.
+    /// `None` where the OS doesn't report it (everything but Linux).
+    pub iowait: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -47,9 +51,22 @@ impl MemInfo {
 pub struct DiskInfo {
     pub mount: String,
     pub fs: String,
+    /// Device behind the mount, e.g. `/dev/sda1`. Several mounts can share one.
+    pub device: String,
     pub total: u64,
     pub used: u64,
     pub percent: f32,
+    /// Bytes per second.
+    pub read_rate: u64,
+    pub write_rate: u64,
+}
+
+/// Read and write rates summed over all disks, each device counted once.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct DiskIo {
+    /// Bytes per second.
+    pub read_rate: u64,
+    pub write_rate: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,6 +114,7 @@ mod tests {
         let json = serde_json::to_value(Snapshot::default()).unwrap();
         assert!(json.get("cpu").is_some());
         assert!(json["host"]["load_avg"].is_null());
+        assert!(json["cpu"]["iowait"].is_null());
         assert!(json["sensors"].as_array().unwrap().is_empty());
     }
 }

@@ -11,12 +11,14 @@ use ratatui::{
 
 use crate::{
     collector::Collector,
-    fmt::{format_uptime, human_bytes, human_rate},
+    fmt::{byte_unit, format_uptime, human_bytes, human_rate},
     history::History,
     model::Snapshot,
 };
 
 const MIN_INTERVAL: Duration = Duration::from_millis(500);
+/// Panel width from which the network totals and disk rate columns are shown.
+const WIDE_PANEL_MIN_WIDTH: u16 = 60;
 
 #[derive(Clone, Copy, PartialEq)]
 enum SortKey {
@@ -154,9 +156,9 @@ impl App {
         let s = &self.snapshot;
         let areas = Layout::horizontal([Constraint::Ratio(1, 3); 3]).split(area);
         let items = [
-            ("CPU", s.cpu.total, format!("{:.1}%", s.cpu.total)),
-            ("MEM", s.mem.percent, usage_label(s.mem.percent, s.mem.used, s.mem.total)),
-            ("SWAP", s.swap.percent, usage_label(s.swap.percent, s.swap.used, s.swap.total)),
+            (self.cpu_title("CPU".into()), s.cpu.total, format!("{:.1}%", s.cpu.total)),
+            (Line::from("MEM"), s.mem.percent, usage_label(s.mem.percent, s.mem.used, s.mem.total)),
+            (Line::from("SWAP"), s.swap.percent, usage_label(s.swap.percent, s.swap.used, s.swap.total)),
         ];
         for ((title, pct, label), area) in items.into_iter().zip(areas.iter()) {
             let gauge = Gauge::default()
@@ -168,8 +170,18 @@ impl App {
         }
     }
 
+    /// `base`, plus the I/O wait in its own color where the OS reports it.
+    fn cpu_title(&self, base: String) -> Line<'static> {
+        let mut spans = vec![Span::raw(base)];
+        if let Some(io) = self.snapshot.cpu.iowait {
+            spans.push(Span::raw("  iowait "));
+            spans.push(Span::styled(format!("{io:.1}%"), Style::new().fg(iowait_color(io))));
+        }
+        Line::from(spans)
+    }
+
     fn draw_graphs(&self, f: &mut Frame, area: Rect) {
-        let [cpu, mem, net] = Layout::horizontal([Constraint::Ratio(1, 3); 3]).areas(area);
+        let [cpu, mem, net, disk] = Layout::horizontal([Constraint::Ratio(1, 4); 4]).areas(area);
         // Sparkline draws from the left, so hand it only the newest points that fit.
         let tail = |area: Rect, value: &dyn Fn(&crate::history::HistoryPoint) -> u64| -> Vec<u64> {
             let width = area.width.saturating_sub(2) as usize;
@@ -181,7 +193,7 @@ impl App {
         let cpu_data = tail(cpu, &|p| p.cpu.round() as u64);
         f.render_widget(
             Sparkline::default()
-                .block(Block::bordered().title(format!("CPU {:.1}%", s.cpu.total)))
+                .block(Block::bordered().title(self.cpu_title(format!("CPU {:.1}%", s.cpu.total))))
                 .style(Style::new().fg(level_color(s.cpu.total)))
                 .max(100)
                 .data(&cpu_data),
@@ -198,25 +210,16 @@ impl App {
             mem,
         );
 
+        let last = self.history.points().last();
+        let (rx, tx) = last.map_or((0, 0), |p| (p.rx_rate, p.tx_rate));
         let net_data = tail(net, &|p| p.rx_rate.saturating_add(p.tx_rate));
-        let (rx, tx) = self
-            .history
-            .points()
-            .last()
-            .map_or((0, 0), |p| (p.rx_rate, p.tx_rate));
-        let peak = net_data.iter().copied().max().unwrap_or(0);
-        f.render_widget(
-            Sparkline::default()
-                .block(
-                    Block::bordered()
-                        .title(format!("NET ↓{} ↑{}", human_rate(rx), human_rate(tx)))
-                        .title_bottom(Line::from(format!("max {}", human_rate(peak))).right_aligned()),
-                )
-                .style(Style::new().fg(Color::Cyan))
-                .max(peak.max(1))
-                .data(&net_data),
-            net,
-        );
+        let net_title = format!("NET ↓{} ↑{}", human_rate(rx), human_rate(tx));
+        f.render_widget(rate_sparkline(net_title, &net_data, Color::Cyan), net);
+
+        let (read, write) = last.map_or((0, 0), |p| (p.disk_read, p.disk_write));
+        let disk_data = tail(disk, &|p| p.disk_read.saturating_add(p.disk_write));
+        let disk_title = format!("DISK R {} W {}", human_rate(read), human_rate(write));
+        f.render_widget(rate_sparkline(disk_title, &disk_data, Color::Magenta), disk);
     }
 
     fn draw_sensors(&self, f: &mut Frame, area: Rect) {
@@ -268,28 +271,51 @@ impl App {
         let [net_area, disk_area] =
             Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(area);
 
+        // Totals only when the interface name still gets room (about 16 columns).
+        let show_totals = net_area.width >= WIDE_PANEL_MIN_WIDTH;
         let net_rows = s.nets.iter().map(|n| {
-            Row::new(vec![n.name.clone(), human_rate(n.rx_rate), human_rate(n.tx_rate)])
+            let mut cells = vec![Span::raw(n.name.clone()), rate_span(n.rx_rate), rate_span(n.tx_rate)];
+            if show_totals {
+                cells.extend([bytes_span(n.rx_total), bytes_span(n.tx_total)]);
+            }
+            Row::new(cells)
         });
-        let net = Table::new(net_rows, [Constraint::Fill(1), Constraint::Length(11), Constraint::Length(11)])
-            .header(header_row(["Interface", "Rx", "Tx"]))
+        let mut widths = vec![Constraint::Fill(1), Constraint::Length(11), Constraint::Length(11)];
+        let header = if show_totals {
+            widths.extend([Constraint::Length(8), Constraint::Length(8)]);
+            header_row(["Interface", "Rx", "Tx", "Rx total", "Tx total"])
+        } else {
+            header_row(["Interface", "Rx", "Tx"])
+        };
+        let net = Table::new(net_rows, widths)
+            .header(header)
             .block(Block::bordered().title("Network"));
         f.render_widget(net, net_area);
 
+        let show_rates = disk_area.width >= WIDE_PANEL_MIN_WIDTH;
         let disk_rows = s.disks.iter().map(|d| {
-            Row::new(vec![
+            let mut cells = vec![
                 Span::raw(d.mount.clone()),
-                Span::raw(human_bytes(d.used)),
-                Span::raw(human_bytes(d.total)),
+                bytes_span(d.used),
+                bytes_span(d.total),
                 Span::styled(format!("{:.1}%", d.percent), Style::new().fg(level_color(d.percent))),
-            ])
+            ];
+            if show_rates {
+                cells.extend([rate_span(d.read_rate), rate_span(d.write_rate)]);
+            }
+            Row::new(cells)
         });
-        let disks = Table::new(
-            disk_rows,
-            [Constraint::Fill(1), Constraint::Length(8), Constraint::Length(8), Constraint::Length(7)],
-        )
-        .header(header_row(["Mount", "Used", "Total", "Use%"]))
-        .block(Block::bordered().title("Disks"));
+        let mut widths =
+            vec![Constraint::Fill(1), Constraint::Length(8), Constraint::Length(8), Constraint::Length(7)];
+        let header = if show_rates {
+            widths.extend([Constraint::Length(10), Constraint::Length(10)]);
+            header_row(["Mount", "Used", "Total", "Use%", "Read", "Write"])
+        } else {
+            header_row(["Mount", "Used", "Total", "Use%"])
+        };
+        let disks = Table::new(disk_rows, widths)
+            .header(header)
+            .block(Block::bordered().title("Disks"));
         f.render_widget(disks, disk_area);
     }
 
@@ -312,7 +338,7 @@ impl App {
                 Span::raw(p.pid.to_string()),
                 Span::styled(format!("{cpu:.1}"), Style::new().fg(level_color(cpu))),
                 Span::raw(format!("{:.1}", p.mem_percent)),
-                Span::raw(human_bytes(p.mem)),
+                bytes_span(p.mem),
                 Span::raw(p.name.clone()),
             ])
         });
@@ -357,6 +383,41 @@ impl App {
     }
 }
 
+/// Byte count colored by its unit, so the magnitude stands out in a column.
+fn bytes_span(bytes: u64) -> Span<'static> {
+    Span::styled(human_bytes(bytes), Style::new().fg(unit_color(byte_unit(bytes))))
+}
+
+fn rate_span(bytes_per_sec: u64) -> Span<'static> {
+    Span::styled(human_rate(bytes_per_sec), Style::new().fg(unit_color(byte_unit(bytes_per_sec))))
+}
+
+/// B gray, K light blue, M cyan, G magenta, T and up light red. Kept clear of the
+/// green/yellow/red used for load levels.
+fn unit_color(unit: usize) -> Color {
+    match unit {
+        0 => Color::DarkGray,
+        1 => Color::LightBlue,
+        2 => Color::Cyan,
+        3 => Color::Magenta,
+        _ => Color::LightRed,
+    }
+}
+
+/// Sparkline of a byte rate, scaled to its own peak, which is shown bottom right.
+fn rate_sparkline(title: String, data: &[u64], color: Color) -> Sparkline<'static> {
+    let peak = data.iter().copied().max().unwrap_or(0);
+    Sparkline::default()
+        .block(
+            Block::bordered()
+                .title(title)
+                .title_bottom(Line::from(format!("max {}", human_rate(peak))).right_aligned()),
+        )
+        .style(Style::new().fg(color))
+        .max(peak.max(1))
+        .data(data)
+}
+
 fn header_row<S: Into<String>, const N: usize>(cells: [S; N]) -> Row<'static> {
     Row::new(cells.into_iter().map(Into::into).collect::<Vec<String>>())
         .style(Style::new().add_modifier(Modifier::BOLD))
@@ -371,6 +432,15 @@ fn level_color(pct: f32) -> Color {
     match pct {
         p if p < 50.0 => Color::Green,
         p if p < 80.0 => Color::Yellow,
+        _ => Color::Red,
+    }
+}
+
+/// I/O wait runs far below CPU load, so it gets its own, lower thresholds.
+fn iowait_color(pct: f32) -> Color {
+    match pct {
+        p if p < 5.0 => Color::Green,
+        p if p < 15.0 => Color::Yellow,
         _ => Color::Red,
     }
 }
@@ -392,7 +462,11 @@ mod tests {
     use crate::model::SensorInfo;
 
     fn render(app: &App) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        render_at(app, 120)
+    }
+
+    fn render_at(app: &App, width: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, 40)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
         let buf = terminal.backend().buffer();
         buf.content().iter().map(|c| c.symbol()).collect()
@@ -428,12 +502,32 @@ mod tests {
         assert!(screen.contains("NET ↓"), "graphs row missing");
         assert!(screen.contains("Sensors") && screen.contains("Package id 0"));
         assert!(screen.contains("71°C") && screen.contains("100°C"));
+        assert!(!screen.contains("iowait"), "no iowait without a value");
+
+        app.snapshot.cpu.iowait = Some(20.0);
+        assert!(render(&app).contains("iowait 20.0%"));
+
+        // The network panel is 60% wide: 72 columns at 120, 48 at 80.
+        assert!(render_at(&app, 120).contains("Rx total"), "totals missing on a wide terminal");
+        assert!(!render_at(&app, 80).contains("Rx total"), "totals shown on a narrow terminal");
+        assert!(render_at(&app, 120).contains("Write"), "disk rates missing on a wide terminal");
+        assert!(!render_at(&app, 80).contains("Write"), "disk rates shown on a narrow terminal");
+        assert!(screen.contains("DISK R"), "disk graph missing");
 
         app.show_graphs = false;
         app.snapshot.sensors.clear();
         let screen = render(&app);
         assert!(!screen.contains("NET ↓"));
         assert!(!screen.contains("Sensors"));
+    }
+
+    #[test]
+    fn iowait_colors() {
+        assert_eq!(iowait_color(0.0), Color::Green);
+        assert_eq!(iowait_color(4.9), Color::Green);
+        assert_eq!(iowait_color(5.0), Color::Yellow);
+        assert_eq!(iowait_color(14.9), Color::Yellow);
+        assert_eq!(iowait_color(15.0), Color::Red);
     }
 
     #[test]

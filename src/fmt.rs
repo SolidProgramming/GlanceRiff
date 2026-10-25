@@ -1,13 +1,24 @@
 const UNITS: [&str; 6] = ["B", "K", "M", "G", "T", "P"];
 
-/// Formats a byte count glances-style: `512B`, `1.5K`, `3.2G`.
-pub fn human_bytes(bytes: u64) -> String {
+/// The value scaled to its unit, and the unit's index into `B K M G T P`.
+fn scale(bytes: u64) -> (f64, usize) {
     let mut value = bytes as f64;
     let mut unit = 0;
     while value >= 1024.0 && unit < UNITS.len() - 1 {
         value /= 1024.0;
         unit += 1;
     }
+    (value, unit)
+}
+
+/// Index of the unit [`human_bytes`] picks: 0 for B, 1 for K, ... 5 for P.
+pub fn byte_unit(bytes: u64) -> usize {
+    scale(bytes).1
+}
+
+/// Formats a byte count glances-style: `512B`, `1.5K`, `3.2G`.
+pub fn human_bytes(bytes: u64) -> String {
+    let (value, unit) = scale(bytes);
     if unit == 0 {
         format!("{bytes}B")
     } else {
@@ -41,6 +52,14 @@ mod tests {
         assert_eq!(human_bytes(1536), "1.5K");
         assert_eq!(human_bytes(3 * 1024 * 1024 * 1024), "3.0G");
         assert_eq!(human_rate(2048), "2.0K/s");
+    }
+
+    #[test]
+    fn units() {
+        assert_eq!(byte_unit(1023), 0);
+        assert_eq!(byte_unit(1024), 1);
+        assert_eq!(byte_unit(3 * 1024 * 1024 * 1024), 3);
+        assert_eq!(byte_unit(u64::MAX), 5);
     }
 
     #[test]
