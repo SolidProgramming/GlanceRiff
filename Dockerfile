@@ -11,7 +11,7 @@ COPY src ./src
 COPY static ./static
 RUN touch src/main.rs && cargo build --release --locked
 
-FROM gcr.io/distroless/cc-debian12
+FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=build /src/target/release/glanceriff /usr/local/bin/glanceriff
 EXPOSE 61208
 ENTRYPOINT ["/usr/local/bin/glanceriff"]
