@@ -1,0 +1,89 @@
+name: Release binaries
+
+# Runs alongside the container workflow. Works both with `gh release create vX.Y.Z`
+# and with a plain `git push origin vX.Y.Z`; in the second case the release is created here.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Keeps `glanceriff --version` in line with the release.
+      - name: Check Cargo.toml version matches the tag
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | cut -d '"' -f2)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Cargo.toml has version $version, but the tag is $TAG. Bump the version first."
+            exit 1
+          fi
+
+      - name: Create the release if it doesn't exist yet
+        run: gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes
+
+  build:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: windows-x86_64.exe
+          # musl gives fully static binaries that run on any distribution.
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: linux-x86_64.tar.gz
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            asset: linux-aarch64.tar.gz
+    runs-on: ${{ matrix.os }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        shell: bash
+        env:
+          # Windows: link the C runtime statically, so no Visual C++ Redistributable is needed.
+          RUSTFLAGS: ${{ contains(matrix.target, 'windows') && '-C target-feature=+crt-static' || '' }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          name="glanceriff-$TAG-${{ matrix.asset }}"
+          dir="target/${{ matrix.target }}/release"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            cp "$dir/glanceriff.exe" "$name"
+          else
+            # tar keeps the executable bit.
+            tar -czf "$name" -C "$dir" glanceriff
+          fi
+          echo "ASSET=$name" >> "$GITHUB_ENV"
+
+      - name: Upload to the release
+        shell: bash
+        run: gh release upload "$TAG" "$ASSET" --clobber

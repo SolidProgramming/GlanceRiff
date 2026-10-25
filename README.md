@@ -19,6 +19,20 @@ It shows:
 
 ## Installation
 
+### Prebuilt binaries
+
+Each [release](https://github.com/SolidProgramming/GlanceRiff/releases) has ready-to-run binaries without dependencies:
+
+| File | Platform |
+| --- | --- |
+| `glanceriff-vX.Y.Z-windows-x86_64.exe` | Windows, 64-bit |
+| `glanceriff-vX.Y.Z-linux-x86_64.tar.gz` | Linux, x86_64 (static, any distribution) |
+| `glanceriff-vX.Y.Z-linux-aarch64.tar.gz` | Linux, ARM64, e.g. Raspberry Pi 4/5 (static) |
+
+The Windows binary isn't code-signed, so SmartScreen may warn on first start (*More info → Run anyway*).
+
+### From source
+
 Requires Rust 1.88 or newer.
 
 ```sh
@@ -181,3 +195,14 @@ cargo test
 ```
 
 The web frontend is a single file, [`static/index.html`](static/index.html), embedded into the binary at compile time.
+
+### Releasing
+
+1. Set `version` in `Cargo.toml` to the new version, run `cargo build` so `Cargo.lock` follows, then commit and push.
+2. Create the release, which also pushes the tag:
+
+   ```sh
+   gh release create v0.2.5 --target master --generate-notes
+   ```
+
+The tag builds the container image (`X.Y.Z`, `X.Y`, `latest`) and attaches the Windows and Linux binaries to the release. The binary workflow fails if the tag and the `Cargo.toml` version differ.
