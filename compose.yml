@@ -9,9 +9,9 @@ services:
     pid: host
     network_mode: host
     uts: host
-    # GlanceRiff doesn't handle signals itself; the init process forwards
-    # them so stopping the container doesn't hang.
-    init: true
+    volumes:
+      # Show the host's OS name instead of the container's.
+      - /etc/os-release:/etc/os-release:ro
     # With network_mode: host the server listens directly on the host.
     # Use 127.0.0.1:61208 to keep it local, 0.0.0.0:61208 to expose it.
     command: ["--web", "--bind", "0.0.0.0:61208"]

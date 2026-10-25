@@ -1,6 +1,8 @@
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use sysinfo::{Disks, Networks, ProcessesToUpdate, System, MINIMUM_CPU_UPDATE_INTERVAL};
+use sysinfo::{
+    Disks, Networks, ProcessesToUpdate, System, ThreadKind, MINIMUM_CPU_UPDATE_INTERVAL,
+};
 
 use crate::model::{CpuInfo, DiskInfo, HostInfo, MemInfo, NetInfo, ProcessInfo, Snapshot};
 
@@ -82,6 +84,8 @@ impl Collector {
             .sys
             .processes()
             .values()
+            // On Linux, sysinfo also lists each process's threads; keep processes only.
+            .filter(|p| p.thread_kind() != Some(ThreadKind::Userland))
             .map(|p| ProcessInfo {
                 pid: p.pid().as_u32(),
                 name: p.name().to_string_lossy().into_owned(),
