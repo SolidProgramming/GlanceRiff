@@ -2,6 +2,10 @@
 
 A lightweight, [glances](https://github.com/nicolargo/glances)-style system monitor written in Rust. Run it as a terminal UI, or serve a web dashboard and JSON API from one self-contained binary.
 
+<img width="1920" height="1080" alt="brave_eJwjhRbPZl" src="https://github.com/user-attachments/assets/5ea911e1-159e-4870-9591-fbcd69bbc246" />
+<img width="1655" height="936" alt="brave_0DdCSqqDti" src="https://github.com/user-attachments/assets/272c1776-b146-486e-a663-b58884e7f53a" />
+
+
 It shows:
 
 - CPU: total and per-core usage
