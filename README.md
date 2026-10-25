@@ -1,4 +1,4 @@
-# GlanceRiff
+# GlanceRiff [![CodeQL](https://github.com/SolidProgramming/GlanceRiff/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/SolidProgramming/GlanceRiff/actions/workflows/github-code-scanning/codeql)
 
 A lightweight, [glances](https://github.com/nicolargo/glances)-style system monitor written in Rust. Run it as a terminal UI, or serve a web dashboard and JSON API from one self-contained binary.
 
