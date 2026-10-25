@@ -43,6 +43,12 @@ fn parse_cpu_times(stat: &str) -> Option<CpuTimes> {
     (fields.len() >= 5).then(|| CpuTimes { iowait: fields[4], total: fields.iter().sum() })
 }
 
+/// Some boards expose unconnected or misread sensor inputs, e.g. a constant
+/// 0 °C or 216 °C from `asus_wmi_sensors`. Real hardware stays well inside this range.
+fn plausible_temp(t: f32) -> bool {
+    t.is_finite() && t > 0.0 && t < 150.0
+}
+
 /// Linux only: other platforms have no I/O wait counter.
 fn read_cpu_times() -> Option<CpuTimes> {
     if cfg!(target_os = "linux") {
@@ -145,6 +151,7 @@ impl Collector {
         }
 
         // Often empty on Windows, where sysinfo needs WMI access for sensors.
+        // Sensors with implausible readings are dropped (see `plausible_temp`).
         let mut sensors: Vec<SensorInfo> = self
             .components
             .list()
@@ -152,8 +159,8 @@ impl Collector {
             .filter_map(|c| {
                 Some(SensorInfo {
                     label: c.label().to_string(),
-                    temp: c.temperature().filter(|t| t.is_finite())?,
-                    max: c.max().filter(|t| t.is_finite()),
+                    temp: c.temperature().filter(|&t| plausible_temp(t))?,
+                    max: c.max().filter(|&t| plausible_temp(t)),
                     critical: c.critical().filter(|t| t.is_finite() && *t > 0.0),
                 })
             })
@@ -224,6 +231,16 @@ intr 114930548 113199788 3 0 5 263 0 4 [...]
         assert_eq!(parse_cpu_times(""), None);
         assert_eq!(parse_cpu_times("cpu  1 2 x 4 5"), None);
         assert_eq!(parse_cpu_times("cpu  1 2 3"), None);
+    }
+
+    #[test]
+    fn implausible_temps() {
+        assert!(plausible_temp(38.0));
+        assert!(plausible_temp(105.0));
+        assert!(!plausible_temp(0.0));
+        assert!(!plausible_temp(-5.0));
+        assert!(!plausible_temp(216.0));
+        assert!(!plausible_temp(f32::NAN));
     }
 
     #[test]

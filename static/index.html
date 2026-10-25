@@ -51,7 +51,9 @@
   .u0 { color: var(--muted); } .u1 { color: var(--u-k); } .u2 { color: var(--u-m); }
   .u3 { color: var(--u-g); } .u4, .u5 { color: var(--u-t); }
   .ok { color: var(--ok); } .warn { color: var(--warn); } .crit { color: var(--crit); }
-  .stack { display: grid; gap: 12px; }
+  .stack { display: grid; gap: 12px; align-content: start; }
+  /* First panel takes the height the other column leaves over; later ones keep their own. */
+  .stack.fill-first { grid-template-rows: 1fr; grid-auto-rows: auto; align-content: stretch; }
   #processes { margin-top: 12px; }
   .proc-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
   .proc-head label { cursor: pointer; user-select: none; }
@@ -83,8 +85,15 @@
 </section>
 
 <section class="grid middle">
-  <div class="panel"><h2>Cores</h2><div class="cores" id="cores"></div></div>
   <div class="stack">
+    <div class="panel"><h2>Cores</h2><div class="cores" id="cores"></div></div>
+    <div class="panel">
+      <div class="net-head"><h2>Disks</h2><span class="muted"><span class="rd">▬ read</span> <span class="wr">▬ write</span> · max <span id="disk-max">–</span></span></div>
+      <svg class="spark net" id="disk-graph" viewBox="0 0 100 30" preserveAspectRatio="none"><line class="grid" x1="0" y1="30" x2="100" y2="30"/><polyline/><polyline/></svg>
+      <table><thead><tr><th>Mount</th><th class="hide-sm">FS</th><th>Used</th><th>Total</th><th>Use%</th><th>Read/s</th><th>Write/s</th></tr></thead><tbody id="disks"></tbody></table>
+    </div>
+  </div>
+  <div class="stack fill-first">
     <div class="panel">
       <div class="net-head"><h2>Network</h2><span class="muted"><span class="rx">▬ rx</span> <span class="tx">▬ tx</span> · max <span id="net-max">–</span></span></div>
       <svg class="spark net" id="net-graph" viewBox="0 0 100 30" preserveAspectRatio="none"><line class="grid" x1="0" y1="30" x2="100" y2="30"/><polyline/><polyline/></svg>
@@ -92,11 +101,6 @@
     </div>
     <div class="panel" id="sensors-panel" hidden><h2>Sensors</h2>
       <table><thead><tr><th>Sensor</th><th>Temp</th><th>Max</th><th>Crit</th></tr></thead><tbody id="sensors"></tbody></table>
-    </div>
-    <div class="panel">
-      <div class="net-head"><h2>Disks</h2><span class="muted"><span class="rd">▬ read</span> <span class="wr">▬ write</span> · max <span id="disk-max">–</span></span></div>
-      <svg class="spark net" id="disk-graph" viewBox="0 0 100 30" preserveAspectRatio="none"><line class="grid" x1="0" y1="30" x2="100" y2="30"/><polyline/><polyline/></svg>
-      <table><thead><tr><th>Mount</th><th class="hide-sm">FS</th><th>Used</th><th>Total</th><th>Use%</th><th>Read/s</th><th>Write/s</th></tr></thead><tbody id="disks"></tbody></table>
     </div>
   </div>
 </section>
@@ -106,7 +110,7 @@
     <h2>Processes <span id="proc-count" class="muted"></span></h2>
     <div class="proc-controls">
       <label class="muted" title="Number of processes to list">
-        Show <input type="number" id="proc-limit" min="1" max="500" step="1" value="15">
+        Show <input type="number" id="proc-limit" min="1" max="500" step="1" value="10">
       </label>
       <label class="muted" title="Off: per core, can exceed 100%. On: share of the whole machine, max 100%.">
         <input type="checkbox" id="normalize"> CPU% of total
