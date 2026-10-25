@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GlanceRiff</title>
+<style>
+  :root {
+    --bg: #101418; --panel: #171c22; --border: #262e38; --text: #d6dde6; --muted: #7d8a99;
+    --accent: #4fc3f7; --ok: #4caf50; --warn: #f0b429; --crit: #ef5350; --track: #232b35;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+    font: 13px/1.4 ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+  }
+  header { display: flex; flex-wrap: wrap; gap: 4px 20px; align-items: baseline; margin-bottom: 12px; }
+  header .host { color: var(--accent); font-weight: bold; font-size: 16px; }
+  header .muted, .muted { color: var(--muted); }
+  #status.stale { color: var(--crit); }
+  .grid { display: grid; gap: 12px; }
+  .gauges { grid-template-columns: repeat(3, 1fr); }
+  .middle { grid-template-columns: 2fr 3fr; margin-top: 12px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; min-width: 0; }
+  .panel h2 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .gauge .row { display: flex; justify-content: space-between; margin-bottom: 6px; }
+  .gauge .pct { font-size: 20px; font-weight: bold; }
+  .bar { height: 8px; background: var(--track); border-radius: 4px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; transition: width .4s, background-color .4s; }
+  .cores { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 14px; }
+  .core { display: grid; grid-template-columns: 2.5em 1fr 4em; gap: 6px; align-items: center; }
+  .core span:last-child { text-align: right; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 3px 6px; text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  td.name { text-align: left; overflow: hidden; text-overflow: ellipsis; max-width: 0; width: 100%; }
+  th { color: var(--muted); font-weight: normal; border-bottom: 1px solid var(--border); }
+  tbody tr:hover { background: #1d242c; }
+  #procs th { cursor: pointer; user-select: none; }
+  #procs th.sorted { color: var(--accent); }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .crit { color: var(--crit); }
+  .stack { display: grid; gap: 12px; }
+  #processes { margin-top: 12px; }
+  .proc-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .proc-head label { cursor: pointer; user-select: none; }
+  @media (max-width: 760px) {
+    .gauges, .middle { grid-template-columns: 1fr; }
+    .hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="host" id="hostname">…</span>
+  <span id="os" class="muted"></span>
+  <span>up <b id="uptime">–</b></span>
+  <span>load <b id="load">–</b></span>
+  <span id="status" class="muted"></span>
+</header>
+
+<section class="grid gauges">
+  <div class="panel gauge" id="g-cpu"><div class="row"><h2>CPU</h2><span class="pct">–</span></div><div class="bar"><i></i></div><div class="muted detail">&nbsp;</div></div>
+  <div class="panel gauge" id="g-mem"><div class="row"><h2>Memory</h2><span class="pct">–</span></div><div class="bar"><i></i></div><div class="muted detail">&nbsp;</div></div>
+  <div class="panel gauge" id="g-swap"><div class="row"><h2>Swap</h2><span class="pct">–</span></div><div class="bar"><i></i></div><div class="muted detail">&nbsp;</div></div>
+</section>
+
+<section class="grid middle">
+  <div class="panel"><h2>Cores</h2><div class="cores" id="cores"></div></div>
+  <div class="stack">
+    <div class="panel"><h2>Network</h2>
+      <table><thead><tr><th>Interface</th><th>Rx/s</th><th>Tx/s</th><th class="hide-sm">Rx total</th><th class="hide-sm">Tx total</th></tr></thead><tbody id="nets"></tbody></table>
+    </div>
+    <div class="panel"><h2>Disks</h2>
+      <table><thead><tr><th>Mount</th><th class="hide-sm">FS</th><th>Used</th><th>Total</th><th>Use%</th></tr></thead><tbody id="disks"></tbody></table>
+    </div>
+  </div>
+</section>
+
+<section class="panel" id="processes">
+  <div class="proc-head">
+    <h2>Processes <span id="proc-count" class="muted"></span></h2>
+    <label class="muted" title="Off: per core, can exceed 100%. On: share of the whole machine, max 100%.">
+      <input type="checkbox" id="normalize"> CPU% of total
+    </label>
+  </div>
+  <table id="procs">
+    <thead><tr>
+      <th data-key="pid">PID</th><th data-key="cpu">CPU%</th><th data-key="mem_percent">MEM%</th>
+      <th data-key="mem">RES</th><th data-key="name" style="text-align:left">Name</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+<script>
+const REFRESH_MS = 2000, MAX_PROCS = 50;
+const $ = id => document.getElementById(id);
+let sortKey = 'cpu', sortDesc = true, last = null;
+
+const level = p => p < 50 ? 'ok' : p < 80 ? 'warn' : 'crit';
+const color = p => `var(--${level(p)})`;
+function bytes(n) {
+  const u = ['B', 'K', 'M', 'G', 'T', 'P']; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return i ? n.toFixed(1) + u[i] : n + 'B';
+}
+function uptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  const hms = [h, m, sec].map(v => String(v).padStart(2, '0')).join(':');
+  return d ? `${d}d ${hms}` : hms;
+}
+// Build a row from cells; every value goes through textContent, never innerHTML.
+function row(cells) {
+  const tr = document.createElement('tr');
+  for (const c of cells) {
+    const td = document.createElement('td');
+    const [text, cls] = Array.isArray(c) ? c : [c];
+    td.textContent = text;
+    if (cls) td.className = cls;
+    tr.appendChild(td);
+  }
+  return tr;
+}
+
+function gauge(id, pct, detail) {
+  const el = $(id);
+  el.querySelector('.pct').textContent = pct.toFixed(1) + '%';
+  el.querySelector('.pct').className = 'pct ' + level(pct);
+  const bar = el.querySelector('.bar > i');
+  bar.style.width = Math.min(pct, 100) + '%';
+  bar.style.backgroundColor = color(pct);
+  el.querySelector('.detail').textContent = detail;
+}
+
+function renderCores(cores) {
+  const box = $('cores');
+  if (box.children.length !== cores.length) {
+    box.replaceChildren(...cores.map((_, i) => {
+      const d = document.createElement('div');
+      d.className = 'core';
+      d.innerHTML = '<span class="muted"></span><div class="bar"><i></i></div><span></span>';
+      d.firstChild.textContent = i;
+      return d;
+    }));
+  }
+  cores.forEach((p, i) => {
+    const d = box.children[i], bar = d.querySelector('i');
+    bar.style.width = Math.min(p, 100) + '%';
+    bar.style.backgroundColor = color(p);
+    d.lastChild.textContent = p.toFixed(1) + '%';
+  });
+}
+
+function renderProcs() {
+  if (!last) return;
+  const dir = sortDesc ? -1 : 1;
+  const procs = [...last.processes].sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    return (typeof x === 'string' ? x.localeCompare(y, undefined, { sensitivity: 'base' }) : x - y) * dir;
+  });
+  const divisor = $('normalize').checked ? Math.max(last.cpu.cores.length, 1) : 1;
+  $('procs').tBodies[0].replaceChildren(...procs.slice(0, MAX_PROCS).map(p => {
+    const cpu = p.cpu / divisor;
+    return row([p.pid, [cpu.toFixed(1), level(cpu)], p.mem_percent.toFixed(1), bytes(p.mem), [p.name, 'name']]);
+  }));
+  $('proc-count').textContent = `(${last.processes.length}, top ${Math.min(MAX_PROCS, procs.length)})`;
+  document.querySelectorAll('#procs th').forEach(th => th.classList.toggle('sorted', th.dataset.key === sortKey));
+}
+
+function render(s) {
+  last = s;
+  $('hostname').textContent = s.host.hostname;
+  $('os').textContent = s.host.os;
+  $('uptime').textContent = uptime(s.host.uptime);
+  $('load').textContent = s.host.load_avg ? s.host.load_avg.map(v => v.toFixed(2)).join(' ') : 'n/a';
+  document.title = `${s.host.hostname} · CPU ${s.cpu.total.toFixed(0)}% · GlanceRiff`;
+
+  gauge('g-cpu', s.cpu.total, `${s.cpu.cores.length} cores`);
+  gauge('g-mem', s.mem.percent, `${bytes(s.mem.used)} / ${bytes(s.mem.total)}`);
+  gauge('g-swap', s.swap.percent, `${bytes(s.swap.used)} / ${bytes(s.swap.total)}`);
+  renderCores(s.cpu.cores);
+
+  $('nets').replaceChildren(...s.nets.map(n => row([n.name, bytes(n.rx_rate), bytes(n.tx_rate),
+    [bytes(n.rx_total), 'hide-sm'], [bytes(n.tx_total), 'hide-sm']])));
+  $('disks').replaceChildren(...s.disks.map(d => row([d.mount, [d.fs, 'hide-sm'], bytes(d.used), bytes(d.total),
+    [d.percent.toFixed(1) + '%', level(d.percent)]])));
+  renderProcs();
+}
+
+document.querySelectorAll('#procs th').forEach(th => th.addEventListener('click', () => {
+  const key = th.dataset.key;
+  if (key === sortKey) sortDesc = !sortDesc;
+  else { sortKey = key; sortDesc = key !== 'name' && key !== 'pid'; }
+  renderProcs();
+}));
+
+// Default comes from --normalize-cpu; a choice made in this browser wins.
+$('normalize').addEventListener('change', e => {
+  try { localStorage.setItem('normalize_cpu', e.target.checked); } catch {}
+  renderProcs();
+});
+async function loadConfig() {
+  let saved = null;
+  try { saved = localStorage.getItem('normalize_cpu'); } catch {}
+  if (saved !== null) { $('normalize').checked = saved === 'true'; return; }
+  try { $('normalize').checked = (await (await fetch('/api/config')).json()).normalize_cpu; } catch {}
+}
+
+async function tick() {
+  try {
+    const res = await fetch('/api/snapshot', { cache: 'no-store' });
+    if (!res.ok) throw new Error(res.status);
+    render(await res.json());
+    $('status').textContent = 'updated ' + new Date().toLocaleTimeString();
+    $('status').classList.remove('stale');
+  } catch (e) {
+    $('status').textContent = 'connection lost, retrying…';
+    $('status').classList.add('stale');
+  }
+  setTimeout(tick, REFRESH_MS);
+}
+loadConfig().then(tick);
+</script>
+</body>
+</html>
