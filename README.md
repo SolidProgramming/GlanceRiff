@@ -76,6 +76,51 @@ Data is collected in the background at the configured interval, so requests are 
 curl -s http://127.0.0.1:61208/api/cpu
 ```
 
+## Container (Docker, Podman, Unraid)
+
+A prebuilt image with the web dashboard is published to `ghcr.io/solidprogramming/glanceriff`:
+
+| Tag | Source |
+| --- | --- |
+| `latest`, `X.Y.Z`, `X.Y` | Release tags (`vX.Y.Z`) |
+| `edge` | Latest commit on `master` |
+
+A container normally only sees its own processes and network. To monitor the host, share its PID, network and UTS namespaces:
+
+```sh
+podman run -d --name glanceriff --pid=host --network=host --uts=host --init \
+  ghcr.io/solidprogramming/glanceriff:latest
+```
+
+The same command works with `docker`. The dashboard is then at `http://<host>:61208`. To pass different options, append them after the image name, including `--web`:
+
+```sh
+podman run ... ghcr.io/solidprogramming/glanceriff:latest --web --bind 0.0.0.0:61208 --interval 1
+```
+
+With Compose (`docker compose` or `podman-compose`):
+
+```sh
+docker compose up -d          # uses the prebuilt image
+docker compose up -d --build  # builds the image locally
+```
+
+Disks only show up if they are mounted into the container, for example `-v /mnt/user:/mnt/user:ro`.
+
+### Unraid
+
+1. Download the [template](unraid/glanceriff.xml) to `/boot/config/plugins/dockerMan/templates-user/my-glanceriff.xml` on your server:
+
+   ```sh
+   wget -O /boot/config/plugins/dockerMan/templates-user/my-glanceriff.xml \
+     https://raw.githubusercontent.com/SolidProgramming/GlanceRiff/master/unraid/glanceriff.xml
+   ```
+
+2. In the Unraid web UI, go to **Docker → Add Container** and select **GlanceRiff** under *Template*.
+3. Click **Apply**. The web UI opens from the container's context menu.
+
+The template uses host networking with `--pid=host --uts=host --init` and mounts `/mnt/user` read-only.
+
 ## Development
 
 ```sh

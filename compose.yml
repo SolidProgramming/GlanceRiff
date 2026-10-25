@@ -1,0 +1,17 @@
+services:
+  glanceriff:
+    image: ghcr.io/solidprogramming/glanceriff:latest
+    build: .
+    container_name: glanceriff
+    restart: unless-stopped
+    # Share the host's namespaces so GlanceRiff sees the host's processes,
+    # network interfaces and hostname instead of the container's own.
+    pid: host
+    network_mode: host
+    uts: host
+    # GlanceRiff doesn't handle signals itself; the init process forwards
+    # them so stopping the container doesn't hang.
+    init: true
+    # With network_mode: host the server listens directly on the host.
+    # Use 127.0.0.1:61208 to keep it local, 0.0.0.0:61208 to expose it.
+    command: ["--web", "--bind", "0.0.0.0:61208"]

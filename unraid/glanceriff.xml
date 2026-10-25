@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>GlanceRiff</Name>
+  <Repository>ghcr.io/solidprogramming/glanceriff:latest</Repository>
+  <Registry>https://github.com/SolidProgramming/GlanceRiff/pkgs/container/glanceriff</Registry>
+  <Network>host</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/SolidProgramming/GlanceRiff/issues</Support>
+  <Project>https://github.com/SolidProgramming/GlanceRiff</Project>
+  <Overview>Lightweight glances-style system monitor. Web dashboard and JSON API for CPU, memory, disks, network and processes.</Overview>
+  <Category>Tools: Status:Stable</Category>
+  <WebUI>http://[IP]:[PORT:61208]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/SolidProgramming/GlanceRiff/master/unraid/glanceriff.xml</TemplateURL>
+  <ExtraParams>--pid=host --uts=host --init</ExtraParams>
+  <PostArgs/>
+  <Config Name="User shares" Target="/mnt/user" Default="/mnt/user" Mode="ro" Description="Mounted read-only so the disk usage of the user shares shows up." Type="Path" Display="always" Required="false" Mask="false">/mnt/user</Config>
+</Container>
