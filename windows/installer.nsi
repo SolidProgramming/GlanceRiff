@@ -75,19 +75,18 @@ FunctionEnd
 Section
   SetOutPath "$INSTDIR"
   File "/oname=glanceriff.exe" "${EXE}"
-  File "${__FILEDIR__}\glanceriff.ico"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   SetShellVarContext all
-  CreateShortcut "$SMPROGRAMS\GlanceRiff.lnk" "$INSTDIR\glanceriff.exe" "" "$INSTDIR\glanceriff.ico"
-  CreateShortcut "$SMPROGRAMS\GlanceRiff Web.lnk" "$INSTDIR\glanceriff.exe" "--web" "$INSTDIR\glanceriff.ico"
+  CreateShortcut "$SMPROGRAMS\GlanceRiff.lnk" "$INSTDIR\glanceriff.exe"
+  CreateShortcut "$SMPROGRAMS\GlanceRiff Web.lnk" "$INSTDIR\glanceriff.exe" "--web"
 
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "GlanceRiff"
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKLM "${UNINST_KEY}" "Publisher" "SolidProgramming"
   WriteRegStr HKLM "${UNINST_KEY}" "URLInfoAbout" "https://github.com/SolidProgramming/GlanceRiff"
   WriteRegStr HKLM "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKLM "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\glanceriff.ico"
+  WriteRegStr HKLM "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\glanceriff.exe"
   WriteRegStr HKLM "${UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
   WriteRegStr HKLM "${UNINST_KEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
   WriteRegDWORD HKLM "${UNINST_KEY}" "NoModify" 1
@@ -104,7 +103,6 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\GlanceRiff Web.lnk"
 
   Delete "$INSTDIR\glanceriff.exe"
-  Delete "$INSTDIR\glanceriff.ico"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
 
