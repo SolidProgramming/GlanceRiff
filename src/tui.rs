@@ -1,12 +1,15 @@
 use std::time::{Duration, Instant};
 
 use ratatui::{
-    crossterm::event::{self, Event, KeyCode, KeyEventKind},
+    crossterm::{
+        event::{self, Event, KeyCode, KeyEventKind},
+        terminal,
+    },
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{Block, Gauge, Paragraph, Row, Sparkline, Table},
-    DefaultTerminal, Frame,
+    DefaultTerminal, Frame, TerminalOptions, Viewport,
 };
 
 use crate::{
@@ -57,11 +60,19 @@ pub fn run(interval: Duration, normalize_cpu: bool) -> anyhow::Result<()> {
         last_refresh: Instant::now(),
     };
 
-    // `init` also installs a panic hook that restores the terminal.
-    let mut terminal = ratatui::init();
+    // A fixed viewport, resized on resize events only: ratatui would otherwise query the size on
+    // every frame, and under Windows Terminal that console call blocks for about 500 ms.
+    // `init_with_options` also installs a panic hook that restores the terminal.
+    let viewport = Viewport::Fixed(terminal_area()?);
+    let mut terminal = ratatui::init_with_options(TerminalOptions { viewport });
     let result = app.event_loop(&mut terminal);
     ratatui::restore();
     result
+}
+
+fn terminal_area() -> std::io::Result<Rect> {
+    let (width, height) = terminal::size()?;
+    Ok(Rect::new(0, 0, width, height))
 }
 
 impl App {
@@ -74,27 +85,36 @@ impl App {
             }
             terminal.draw(|f| self.draw(f))?;
 
-            if event::poll(Duration::from_millis(250))?
-                && let Event::Key(key) = event::read()?
-                && key.kind == KeyEventKind::Press
-            {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                    KeyCode::Char('c') => self.sort = SortKey::Cpu,
-                    KeyCode::Char('m') => self.sort = SortKey::Mem,
-                    KeyCode::Char('p') => self.sort = SortKey::Name,
-                    KeyCode::Char(' ') => self.paused = !self.paused,
-                    KeyCode::Char('n') => self.normalize_cpu = !self.normalize_cpu,
-                    KeyCode::Char('g') => self.show_graphs = !self.show_graphs,
-                    KeyCode::Char('+') => self.interval += Duration::from_millis(500),
-                    KeyCode::Char('-') => {
-                        self.interval = self
-                            .interval
-                            .saturating_sub(Duration::from_millis(500))
-                            .max(MIN_INTERVAL)
-                    }
+            // Drain everything queued, so a burst of resize events while dragging costs one size query.
+            let mut resized = false;
+            let mut timeout = Duration::from_millis(250);
+            while event::poll(timeout)? {
+                timeout = Duration::ZERO;
+                match event::read()? {
+                    Event::Resize(..) => resized = true,
+                    Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                        KeyCode::Char('c') => self.sort = SortKey::Cpu,
+                        KeyCode::Char('m') => self.sort = SortKey::Mem,
+                        KeyCode::Char('p') => self.sort = SortKey::Name,
+                        KeyCode::Char(' ') => self.paused = !self.paused,
+                        KeyCode::Char('n') => self.normalize_cpu = !self.normalize_cpu,
+                        KeyCode::Char('g') => self.show_graphs = !self.show_graphs,
+                        KeyCode::Char('+') => self.interval += Duration::from_millis(500),
+                        KeyCode::Char('-') => {
+                            self.interval = self
+                                .interval
+                                .saturating_sub(Duration::from_millis(500))
+                                .max(MIN_INTERVAL)
+                        }
+                        _ => {}
+                    },
                     _ => {}
                 }
+            }
+            // Asked for here rather than taken from the event: crossterm reports it one too large on Windows.
+            if resized {
+                terminal.resize(terminal_area()?)?;
             }
         }
     }
