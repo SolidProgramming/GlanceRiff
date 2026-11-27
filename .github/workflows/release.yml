@@ -87,3 +87,14 @@ jobs:
       - name: Upload to the release
         shell: bash
         run: gh release upload "$TAG" "$ASSET" --clobber
+
+      # Options with "-", not "/": Git Bash would rewrite "/D..." as a path.
+      - name: Build and upload the Windows installer
+        if: contains(matrix.target, 'windows')
+        shell: bash
+        run: |
+          makensis="/c/Program Files (x86)/NSIS/makensis.exe"
+          [ -x "$makensis" ] || choco install nsis -y --no-progress
+          setup="glanceriff-$TAG-windows-x86_64-setup.exe"
+          "$makensis" -NOCD -DVERSION="${TAG#v}" -DEXE="$ASSET" -DOUTFILE="$setup" windows/installer.nsi
+          gh release upload "$TAG" "$setup" --clobber

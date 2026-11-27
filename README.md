@@ -25,11 +25,14 @@ Each [release](https://github.com/SolidProgramming/GlanceRiff/releases) has read
 
 | File | Platform |
 | --- | --- |
-| `glanceriff-vX.Y.Z-windows-x86_64.exe` | Windows, 64-bit |
+| `glanceriff-vX.Y.Z-windows-x86_64-setup.exe` | Windows, 64-bit installer (needs admin rights) |
+| `glanceriff-vX.Y.Z-windows-x86_64.exe` | Windows, 64-bit, portable |
 | `glanceriff-vX.Y.Z-linux-x86_64.tar.gz` | Linux, x86_64 (static, any distribution) |
 | `glanceriff-vX.Y.Z-linux-aarch64.tar.gz` | Linux, ARM64, e.g. Raspberry Pi 4/5 (static) |
 
-The Windows binary isn't code-signed, so SmartScreen may warn on first start (*More info → Run anyway*).
+The installer puts GlanceRiff into `C:\Program Files\GlanceRiff`, adds it to the `PATH` and creates Start menu entries for the terminal UI and the web dashboard. Uninstall it under *Settings → Apps*.
+
+The Windows binary and installer aren't code-signed, so SmartScreen may warn on first start (*More info → Run anyway*).
 
 ### From source
 
@@ -205,4 +208,4 @@ The web frontend is a single file, [`static/index.html`](static/index.html), emb
    gh release create v0.2.5 --target master --generate-notes
    ```
 
-The tag builds the container image (`X.Y.Z`, `X.Y`, `latest`) and attaches the Windows and Linux binaries to the release. The binary workflow fails if the tag and the `Cargo.toml` version differ.
+The tag builds the container image (`X.Y.Z`, `X.Y`, `latest`) and attaches the Windows and Linux binaries and the Windows installer ([`windows/installer.nsi`](windows/installer.nsi)) to the release. The binary workflow fails if the tag and the `Cargo.toml` version differ.
