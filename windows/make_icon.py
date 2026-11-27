@@ -107,3 +107,7 @@ if __name__ == "__main__":
     out = Path(__file__).with_name("glanceriff.ico")
     out.write_bytes(data)
     print(f"wrote {out} ({len(data)} bytes)")
+    # The Unraid template points at this PNG.
+    png_out = Path(__file__).parent.parent / "unraid" / "glanceriff.png"
+    png_out.write_bytes(images[-1][1])
+    print(f"wrote {png_out}")
