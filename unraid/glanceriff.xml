@@ -11,6 +11,7 @@
   <Category>Tools: Status:Stable</Category>
   <WebUI>http://[IP]:[PORT:61208]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/SolidProgramming/GlanceRiff/master/unraid/glanceriff.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/SolidProgramming/GlanceRiff/master/unraid/glanceriff.png</Icon>
   <ExtraParams>--pid=host --uts=host</ExtraParams>
   <PostArgs/>
   <Config Name="Host OS info" Target="/etc/os-release" Default="/etc/os-release" Mode="ro" Description="Lets the dashboard show the host's OS name instead of the container's." Type="Path" Display="advanced" Required="false" Mask="false">/etc/os-release</Config>
